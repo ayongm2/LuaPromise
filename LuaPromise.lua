@@ -37,11 +37,20 @@ e.g.
 	===多个Promise顺序调用的情况===
 	httpGetPromise("www.google.com")
 		:andThen(function ( data )
+	    	-- 第一种使用方式,不使用协程直接顺序执行
 	    	print("do something to change data")
 	    	data = "hello world..."
 	        return true, data
 	    end)
+	    :andThen(function ( data, promise )
+	    	-- 进行延迟执行,这里使用quick-x中的延迟机制
+	    	-- 第二种使用方式,使用当前promise对象通过协程继续流程
+            scheduler.performWithDelayGlobal(function ( ... )
+                promise:resolve(data)
+            end, 1.0)
+        end)
 	    :andThen(function(data)
+	    	-- 第三种使用方式,使用新的promise进行新的处理,复用已有promise时比较方便
 	    	return true, httpGetPromise("www.bing.com")
 	    end)
 	    :andThen(function ( data )
@@ -67,6 +76,7 @@ local ipairs = ipairs
 
 LuaPromise = {}
 local mt = {__index = LuaPromise}
+-- 构造, process中有异步回调概念, 要不用这东东就没有意义了
 function LuaPromise.new( process )
 	local promise = setmetatable({}, mt)
 	promise.chain_ = {{main_process = process}}
@@ -134,34 +144,36 @@ function LuaPromise:done()
 		promiseInfo.main_process(self)
 		-- 等待返回后继续处理吧
 		ok, data = coroutine_yield()
-		local total = #self.chain_
-		-- 剩下andThen之类顺序处理
-		for i, promiseInfo in ipairs(self.chain_) do
-			-- 看看返回的是不是Promise,是的话当前Promise就可以结束了,执行交给新Promise
-			if isPromise_(data) then
-				-- 转移下剩下的要执行的步骤
-				for j = i, #self.chain_ do
-					data.chain_[#data.chain_ + 1] = self.chain_[j]
+		if ok then
+			local total = #self.chain_
+			-- 剩下andThen之类顺序处理
+			for i, promiseInfo in ipairs(self.chain_) do
+				-- 看看返回的是不是Promise,是的话当前Promise就可以结束了,执行交给新Promise
+				if isPromise_(data) then
+					-- 转移下剩下的要执行的步骤
+					for j = i, #self.chain_ do
+						data.chain_[#data.chain_ + 1] = self.chain_[j]
+					end
+					data:done()
+					-- 把当前的结束了
+					self.chain_ = nil
+					break
 				end
-				data:done()
-				-- 把当前的结束了
-				self.chain_ = nil
-				break
-			end
-			-- 执行主体
-			ok, data = promiseInfo.main_process(data)
-			-- 看是结束了还是挂起
-			if ok == nil and data == nil then 
-				if i == total then 
-					ok = true
-				else
-					ok, data = coroutine_yield()
+				-- 执行主体
+				ok, data = promiseInfo.main_process(data)
+				-- 看是结束了还是挂起
+				if ok == nil and data == nil then 
+					if i == total then 
+						ok = true
+					else
+						ok, data = coroutine_yield()
+					end
 				end
-			end
-			-- 中断的结束判定
-			if not ok then 
-				index = i
-				break 
+				-- 中断的结束判定
+				if not ok then 
+					index = i
+					break 
+				end
 			end
 		end
 		if self.chain_ then 
