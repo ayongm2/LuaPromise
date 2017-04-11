@@ -140,10 +140,12 @@ function LuaPromise:done()
 	self.coroutine_ = coroutine_create(function (  )
 		local ok, data, index = true
 		local promiseInfo = table.remove(self.chain_, 1)
-		-- 先执行第一个,也就是Promise本身
-		promiseInfo.main_process(self)
-		-- 等待返回后继续处理吧
-		ok, data = coroutine_yield()
+		-- 先执行第一个,也就是Promise本身,实际情况这里可能直接返回数据而不使用promise
+		ok, data = promiseInfo.main_process(self)
+		if ok == nil then 
+			-- 等待返回后继续处理吧
+			ok, data = coroutine_yield()
+		end
 		if ok then
 			local total = #self.chain_
 			-- 剩下andThen之类顺序处理
@@ -160,7 +162,7 @@ function LuaPromise:done()
 					break
 				end
 				-- 执行主体
-				ok, data = promiseInfo.main_process(data)
+				ok, data = promiseInfo.main_process(data, self)
 				-- 看是结束了还是挂起
 				if ok == nil and data == nil then 
 					if i == total then 
